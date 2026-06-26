@@ -216,3 +216,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+docs/
+
+CLAUDE.md
+
+# ---- Android / Gradle（PepperPractice/ 用に追記） ----
+# SDK パス等（漏洩厳禁）
+local.properties
+# ビルド成果物・キャッシュ
+.gradle/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+# IDE
+.idea/
+*.iml
+.DS_Store
+# パッケージ・署名鍵（漏洩厳禁）
+*.apk
+*.aab
+*.jks
+*.keystore
