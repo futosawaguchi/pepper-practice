@@ -240,3 +240,7 @@ captures/
 *.aab
 *.jks
 *.keystore
+
+# ---- Python クライアント生成物 ----
+# pepper.py が snap 画像を ./output/ に保存する（venv/ と .env は上の Python テンプレートで除外済み）
+output/
