@@ -24,4 +24,8 @@
 
     <uses-feature android:name="com.softbank.hardware.pepper"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <!-- TCP サーバ（ServerSocket/Socket）の通信に必須 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- startNetworkMonitor() の ConnectivityManager.registerNetworkCallback に必須 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 </manifest>
