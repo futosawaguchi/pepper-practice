@@ -49,12 +49,21 @@ PEPPER_IPS=127.0.0.1 python python/pepper.py   # ターミナルB
 QiSDK アプリ経由では関節角の直接指定ができない。NAOqi 2.9 でも内部の `ALMotion` は生きているので、
 `naoqi_lowlevel.py` で Python から直結して腕・首などをラジアン指定で動かせる（**非公式・自己責任**）。
 
-前提: ロボットの **user/password が必要**（2.9 は認証＋TLS:9503 必須）。`python/.env` に設定（コミット禁止）:
+前提: ロボットの **user/password が必要**（2.9 は認証＋TLS 必須）。
+
+> ⚠️ **接続先 IP に注意**: NAOqi（ALMotion）は**ロボット頭部**で動く。`pepper.py` が使う胸部 Android
+> タブレットの IP（`PEPPER_IPS`）とは**別物**。`PEPPER_NAOQI_IP` には `ssh nao@<このIP>` で入れる方を書く。
+
+`python/.env` に設定（コミット禁止）:
 ```
-PEPPER_NAOQI_PORT=9503
+PEPPER_NAOQI_IP=192.168.x.x   # ロボット頭部のIP（タブレットの PEPPER_IPS とは別）
+PEPPER_NAOQI_PORT=9559        # 標準。スクリプトは 9559/9503 を試す
 PEPPER_USER=nao
 PEPPER_PASSWORD=（実パスワード）
 ```
+リモート接続が `disconnected`/`Connection refused` で安定しない場合は、**`ssh nao@<ロボット頭部IP>` で
+ロボットに入り、ローカルの `qicli`（例: `qicli call ALMotion.wakeUp`）や python で ALMotion を叩く**方が
+確実（ローカル接続は TLS/認証不要なことが多い）。
 手順:
 ```bash
 pip install -r python/requirements-naoqi.txt           # qi(libqi-python)

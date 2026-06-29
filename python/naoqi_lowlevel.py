@@ -26,10 +26,27 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-IP = [ip.strip() for ip in os.environ.get("PEPPER_IPS", "127.0.0.1").split(",") if ip.strip()][0]
-PORT = int(os.environ.get("PEPPER_NAOQI_PORT", "9503"))
+# 重要: NAOqi（ALMotion）はロボット「頭部」で動く。胸部 Android タブレット（PEPPER_IPS）とは別IP。
+#   タブレット = QiSDKアプリ側のIP / ロボット頭部 = ssh nao@<このIP> で入れる方（実値は python/.env に）
+# PEPPER_NAOQI_IP を優先。未設定なら PEPPER_IPS[0] にフォールバック（多くの場合これは誤り＝タブレット）。
+_tablet_ips = [ip.strip() for ip in os.environ.get("PEPPER_IPS", "127.0.0.1").split(",") if ip.strip()]
+IP = os.environ.get("PEPPER_NAOQI_IP", "").strip() or (_tablet_ips[0] if _tablet_ips else "127.0.0.1")
+PORT = int(os.environ.get("PEPPER_NAOQI_PORT", "9559"))
 USER = os.environ.get("PEPPER_USER", "nao")
 PASSWORD = os.environ.get("PEPPER_PASSWORD", "")
+
+
+def _candidate_urls():
+    """接続候補。標準ポート 9559 と 2.9 のTLS用 9503、各々 tcps→tcp の順で試す。"""
+    ports = []
+    for p in (PORT, 9559, 9503):
+        if p not in ports:
+            ports.append(p)
+    urls = []
+    for p in ports:
+        urls.append(f"tcps://{IP}:{p}")
+        urls.append(f"tcp://{IP}:{p}")
+    return urls
 
 
 def _make_factory(user, password):
@@ -54,9 +71,12 @@ def connect():
 
     if not PASSWORD:
         print("警告: PEPPER_PASSWORD が空です。python/.env に実パスワードを設定してください。", file=sys.stderr)
+    if not os.environ.get("PEPPER_NAOQI_IP"):
+        print("注意: PEPPER_NAOQI_IP 未設定。NAOqi はロボット頭部のIP（タブレット PEPPER_IPS とは別）です。"
+              f" 今は {IP} に接続しようとしています。", file=sys.stderr)
 
     last_err = None
-    for url in (f"tcps://{IP}:{PORT}", f"tcp://{IP}:{PORT}"):
+    for url in _candidate_urls():
         try:
             session = qi.Session()
             session.setClientAuthenticatorFactory(_make_factory(USER, PASSWORD))
@@ -68,10 +88,11 @@ def connect():
             print(f"接続失敗: {url} -> {e}")
     sys.exit(
         "NAOqi に接続できませんでした。確認:\n"
-        "  - python/.env の PEPPER_IPS / PEPPER_USER / PEPPER_PASSWORD が正しいか\n"
-        "  - ロボットと同じ Wi-Fi にいるか、ポート 9503 に到達できるか\n"
-        "  - qi のバージョン（>=3.1.5 推奨）。2.9 接続は既知の不安定さあり（libqi-python issue #22）\n"
-        "  - ダメなら Docker(linux)+qi か ROS2 naoqi_driver2 を検討\n"
+        "  - PEPPER_NAOQI_IP が『ロボット頭部』のIPか（ssh nao@<このIP> で入れる方。タブレットの PEPPER_IPS とは別）\n"
+        "  - python/.env の PEPPER_USER / PEPPER_PASSWORD が正しいか\n"
+        "  - ロボットと同じ Wi-Fi にいるか、ポート 9559/9503 に到達できるか\n"
+        "  - qi のバージョン（>=3.1.5 推奨）。2.9 のリモート接続は既知の不安定さあり（libqi-python issue #22）\n"
+        "  - リモートがダメなら ssh でロボットに入り、ローカルの qicli / python で ALMotion を叩く方が確実\n"
         f"  最後のエラー: {last_err}"
     )
 
