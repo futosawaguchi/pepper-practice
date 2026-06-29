@@ -1,0 +1,6 @@
+# 低レベル NAOqi 直結（ALMotion など）専用の依存。TCP ブリッジ用 requirements.txt とは分離。
+# qi = libqi-python。NAOqi 2.9 へ認証付きでリモート接続するために使う。
+# 注意: プラットフォーム依存。macOS arm64 は Python 3.12 の wheel あり（qi>=3.1.5）。
+#       他環境で wheel が無い場合はソースビルドか Docker(linux)/ROS2 を検討。
+qi>=3.1.5
+python-dotenv>=1.0
