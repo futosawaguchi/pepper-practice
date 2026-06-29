@@ -294,6 +294,7 @@ public class MainActivity extends RobotActivity implements RobotLifecycleCallbac
     private void createAndSaveMap(final QiContext qiContext, final Runnable onDone) {
         try {
             final LocalizeAndMap lam = LocalizeAndMapBuilder.with(qiContext).build();
+            enqueueSpeech(qiContext, "地図の作成を始めます。私の周りをゆっくり歩いて、周囲を覚えさせてください。");
             lam.addOnStatusChangedListener(new LocalizeAndMap.OnStatusChangedListener() {
                 @Override public void onStatusChanged(LocalizationStatus status) {
                     Log.i("LocalizeAndMap", "status=" + status);
@@ -306,8 +307,10 @@ public class MainActivity extends RobotActivity implements RobotLifecycleCallbac
                                     String mapStr = map.serialize();
                                     saveMapString(mapStr);
                                     Log.i("LocalizeAndMap", "map dumped & saved");
+                                    enqueueSpeech(qiContext, "地図を保存しました。設定を本番モードに戻して、もう一度起動してください。");
                                 } catch (Throwable t) {
                                     Log.e("LocalizeAndMap", "dump/save failed", t);
+                                    enqueueSpeech(qiContext, "地図の保存に失敗しました。");
                                 } finally {
                                     if (lamFuture != null) lamFuture.requestCancellation();
                                     if (onDone != null) onDone.run();
