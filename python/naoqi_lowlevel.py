@@ -12,8 +12,18 @@ QiSDK アプリ（pepper.py の TCP ブリッジ）とは別系統。QiSDK で�
   python python/naoqi_lowlevel.py services            # 接続確認＆サービス一覧（ALMotion があるか）
   python python/naoqi_lowlevel.py arm                 # デモ: 右腕を少し上げる
   python python/naoqi_lowlevel.py angles "RShoulderPitch=0.5,RElbowRoll=1.0" --speed 0.2
+  python python/naoqi_lowlevel.py say "こんにちは"      # 発話（ALTextToSpeech）
+  python python/naoqi_lowlevel.py postures            # 利用可能な姿勢名
+  python python/naoqi_lowlevel.py posture StandInit   # 姿勢へ遷移
+  python python/naoqi_lowlevel.py hand open R         # 右手を開く（close で閉じる）
+  python python/naoqi_lowlevel.py limits HeadYaw      # 関節の可動範囲（安全確認）
+  python python/naoqi_lowlevel.py move 0.2 0 0        # 基底移動 moveTo(x,y,theta)（周囲確認のうえ）
   python python/naoqi_lowlevel.py rest                # 力を抜く（rest）
   python python/naoqi_lowlevel.py enable-life         # 自律機能を戻す（solitary）
+
+任意のサービスを使いたい場合は対話 python で:
+  from naoqi_lowlevel import connect
+  s = connect(); s.service("ALLeds").randomEyes(2.0)
 
 注意: 周囲に人や物が無いことを確認してから動かすこと。速度は控えめ(0.2)。
 """
@@ -142,6 +152,62 @@ def cmd_arm(args):
     motion.rest()
 
 
+def cmd_say(args):
+    session = connect()
+    session.service("ALTextToSpeech").say(args.text)
+    print(f"say: {args.text}")
+
+
+def cmd_postures(args):
+    session = connect()
+    names = session.service("ALRobotPosture").getPostureList()
+    print("利用可能な姿勢:")
+    for n in names:
+        print("  " + n)
+
+
+def cmd_posture(args):
+    session = connect()
+    _prepare_motion(session, disable_life=not args.keep_life)
+    print(f"goToPosture({args.name}, {args.speed})")
+    ok = session.service("ALRobotPosture").goToPosture(args.name, args.speed)
+    print("完了" if ok else "到達できず（姿勢名は postures で確認）")
+
+
+def cmd_hand(args):
+    name = ("R" if args.side.upper().startswith("R") else "L") + "Hand"
+    session = connect()
+    motion = _prepare_motion(session, disable_life=not args.keep_life)
+    if args.action == "open":
+        motion.openHand(name)
+    else:
+        motion.closeHand(name)
+    print(f"{args.action} {name}")
+
+
+def cmd_limits(args):
+    session = connect()
+    limits = session.service("ALMotion").getLimits(args.joint)
+    # 返り値: 各関節について [minAngle, maxAngle, maxVelocity, maxTorque]（ラジアン）
+    print(f"{args.joint} の可動範囲(ラジアン): {limits}")
+
+
+def cmd_move(args):
+    import math
+    x = max(-0.5, min(0.5, args.x))
+    y = max(-0.5, min(0.5, args.y))
+    theta = max(-math.pi / 2, min(math.pi / 2, args.theta))
+    if (x, y, theta) != (args.x, args.y, args.theta):
+        print(f"安全のためクランプしました -> x={x}, y={y}, theta={theta}")
+    print("★ 基底移動します。周囲に人や物が無いか確認してください。3秒後に開始…")
+    time.sleep(3.0)
+    session = connect()
+    motion = _prepare_motion(session, disable_life=not args.keep_life)
+    print(f"moveTo({x}, {y}, {theta})")
+    motion.moveTo(x, y, theta)
+    print("移動完了。")
+
+
 def cmd_angles(args):
     pairs = []
     for tok in args.spec.split(","):
@@ -188,6 +254,35 @@ def main():
     pg.add_argument("--speed", type=float, default=0.2)
     pg.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
     pg.set_defaults(func=cmd_angles)
+
+    ps = sub.add_parser("say", help="発話（ALTextToSpeech）")
+    ps.add_argument("text")
+    ps.set_defaults(func=cmd_say)
+
+    sub.add_parser("postures", help="利用可能な姿勢名を表示").set_defaults(func=cmd_postures)
+
+    pp = sub.add_parser("posture", help='姿勢へ遷移。例 "StandInit"')
+    pp.add_argument("name")
+    pp.add_argument("--speed", type=float, default=0.5)
+    pp.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
+    pp.set_defaults(func=cmd_posture)
+
+    ph = sub.add_parser("hand", help="手を開閉。例: hand open R")
+    ph.add_argument("action", choices=["open", "close"])
+    ph.add_argument("side", choices=["L", "R", "l", "r"])
+    ph.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
+    ph.set_defaults(func=cmd_hand)
+
+    pl = sub.add_parser("limits", help="関節の可動範囲を表示。例: limits HeadYaw")
+    pl.add_argument("joint")
+    pl.set_defaults(func=cmd_limits)
+
+    pm = sub.add_parser("move", help="基底移動 moveTo(x,y,theta)。例: move 0.2 0 0")
+    pm.add_argument("x", type=float)
+    pm.add_argument("y", type=float)
+    pm.add_argument("theta", type=float)
+    pm.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
+    pm.set_defaults(func=cmd_move)
 
     sub.add_parser("rest", help="力を抜く(rest)").set_defaults(func=cmd_rest)
     sub.add_parser("enable-life", help="自律機能を solitary に戻す").set_defaults(func=cmd_enable_life)
