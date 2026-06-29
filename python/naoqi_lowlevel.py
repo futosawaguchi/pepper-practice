@@ -16,7 +16,8 @@ QiSDK アプリ（pepper.py の TCP ブリッジ）とは別系統。QiSDK で�
   python python/naoqi_lowlevel.py postures            # 利用可能な姿勢名
   python python/naoqi_lowlevel.py posture StandInit   # 姿勢へ遷移
   python python/naoqi_lowlevel.py hand open R         # 右手を開く（close で閉じる）
-  python python/naoqi_lowlevel.py limits HeadYaw      # 関節の可動範囲（安全確認）
+  python python/naoqi_lowlevel.py limits              # 全関節の可動範囲(rad+deg)をMarkdown表で出力
+  python python/naoqi_lowlevel.py limits HeadYaw      # 特定関節だけ
   python python/naoqi_lowlevel.py move 0.2 0 0        # 基底移動 moveTo(x,y,theta)（周囲確認のうえ）
   python python/naoqi_lowlevel.py rest                # 力を抜く（rest）
   python python/naoqi_lowlevel.py enable-life         # 自律機能を戻す（solitary）
@@ -44,6 +45,14 @@ IP = os.environ.get("PEPPER_NAOQI_IP", "").strip() or (_tablet_ips[0] if _tablet
 PORT = int(os.environ.get("PEPPER_NAOQI_PORT", "9559"))
 USER = os.environ.get("PEPPER_USER", "nao")
 PASSWORD = os.environ.get("PEPPER_PASSWORD", "")
+
+# Pepper の標準関節（limits の全関節表示・参考用）
+PEPPER_JOINTS = [
+    "HeadYaw", "HeadPitch",
+    "LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll", "LWristYaw", "LHand",
+    "RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll", "RWristYaw", "RHand",
+    "HipRoll", "HipPitch", "KneePitch",
+]
 
 
 def _candidate_urls():
@@ -186,10 +195,20 @@ def cmd_hand(args):
 
 
 def cmd_limits(args):
+    import math
     session = connect()
-    limits = session.service("ALMotion").getLimits(args.joint)
-    # 返り値: 各関節について [minAngle, maxAngle, maxVelocity, maxTorque]（ラジアン）
-    print(f"{args.joint} の可動範囲(ラジアン): {limits}")
+    motion = session.service("ALMotion")
+    joints = [args.joint] if (args.joint and args.joint.lower() != "all") else PEPPER_JOINTS
+    # getLimits(joint) -> [[minAngle, maxAngle, maxVelocity, maxTorque]]（ラジアン）
+    print("| 関節 | min(rad) | max(rad) | min(deg) | max(deg) | maxVel(rad/s) |")
+    print("|---|---|---|---|---|---|")
+    for j in joints:
+        try:
+            row = motion.getLimits(j)[0]
+            mn, mx, vel = float(row[0]), float(row[1]), float(row[2])
+            print(f"| {j} | {mn:.4f} | {mx:.4f} | {math.degrees(mn):.1f} | {math.degrees(mx):.1f} | {vel:.3f} |")
+        except Exception as e:  # noqa: BLE001
+            print(f"| {j} | 取得失敗: {e} | | | | |")
 
 
 def cmd_move(args):
@@ -273,8 +292,8 @@ def main():
     ph.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
     ph.set_defaults(func=cmd_hand)
 
-    pl = sub.add_parser("limits", help="関節の可動範囲を表示。例: limits HeadYaw")
-    pl.add_argument("joint")
+    pl = sub.add_parser("limits", help="可動範囲(rad+deg)。引数なしで全関節をMarkdown表で出力。例: limits HeadYaw")
+    pl.add_argument("joint", nargs="?", default=None)
     pl.set_defaults(func=cmd_limits)
 
     pm = sub.add_parser("move", help="基底移動 moveTo(x,y,theta)。例: move 0.2 0 0")
