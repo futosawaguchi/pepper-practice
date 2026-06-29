@@ -112,9 +112,17 @@ def _prepare_motion(session, disable_life=True):
     return motion
 
 
+def _service_name(s):
+    # libqi-python のバージョンにより services() は dict のリスト or オブジェクトのリスト
+    if isinstance(s, dict):
+        return s.get("name") or s.get("serviceName") or str(s)
+    n = getattr(s, "name", None)
+    return n() if callable(n) else (n or str(s))
+
+
 def cmd_services(args):
     session = connect()
-    names = sorted(s.name() for s in session.services())
+    names = sorted(_service_name(s) for s in session.services())
     print(f"サービス数: {len(names)}")
     for n in names:
         print("  " + n)
