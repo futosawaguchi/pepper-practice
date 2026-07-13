@@ -19,6 +19,7 @@ QiSDK アプリ（pepper.py の TCP ブリッジ）とは別系統。QiSDK で�
   python python/naoqi_lowlevel.py limits              # 全関節の可動範囲(rad+deg)をMarkdown表で出力
   python python/naoqi_lowlevel.py limits HeadYaw      # 特定関節だけ
   python python/naoqi_lowlevel.py move 0.2 0 0        # 基底移動 moveTo(x,y,theta)（周囲確認のうえ）
+  python python/naoqi_lowlevel.py rotate 90 --stand   # その場回転（診断つき。--vel/--force も）
   python python/naoqi_lowlevel.py rest                # 力を抜く（rest）
   python python/naoqi_lowlevel.py enable-life         # 自律機能を戻す（solitary）
 
@@ -129,6 +130,159 @@ def _prepare_motion(session, disable_life=True):
             print(f"注意: ALAutonomousLife を無効化できませんでした: {e}")
     motion.wakeUp()
     return motion
+
+
+# --- 基底移動/回転の診断ヘルパー（rotate が使う） ---
+def _robot_pose(motion):
+    """世界座標での現在姿勢 [x, y, theta(rad)]。取得できなければ None。"""
+    try:
+        p = motion.getRobotPosition(True)
+        return [float(p[0]), float(p[1]), float(p[2])]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ang_diff(a, b):
+    """角度差 a-b を [-pi, pi] に正規化（実回転量の計測用）。"""
+    import math
+    return math.atan2(math.sin(a - b), math.cos(a - b))
+
+
+def _get_move_protection(motion):
+    """基底の衝突保護/セキュリティ距離の現在値を取得（表示・復元用）。取得失敗は None。"""
+    info = {"ext_move": None, "ortho": None, "tang": None}
+    try:
+        info["ext_move"] = motion.getExternalCollisionProtectionEnabled("Move")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        info["ortho"] = motion.getOrthogonalSecurityDistance()
+        info["tang"] = motion.getTangentialSecurityDistance()
+    except Exception:  # noqa: BLE001
+        pass
+    return info
+
+
+def _report_protection(motion):
+    info = _get_move_protection(motion)
+    print(f"基底保護: ExternalCollisionProtection('Move')={info['ext_move']} / "
+          f"security(ortho={info['ortho']}, tang={info['tang']})")
+
+
+def _relax_base_protection(motion):
+    """基底の衝突保護とセキュリティ距離を一時的に緩める。元に戻す関数を返す。
+    安全機能を下げるので、周囲を空けたうえで使うこと。"""
+    prev = _get_move_protection(motion)
+    try:
+        motion.setExternalCollisionProtectionEnabled("Move", False)
+    except Exception as e:  # noqa: BLE001
+        print(f"注意: ExternalCollisionProtection('Move') を無効化できませんでした: {e}")
+    try:
+        motion.setTangentialSecurityDistance(0.05)
+        motion.setOrthogonalSecurityDistance(0.10)
+    except Exception as e:  # noqa: BLE001
+        print(f"注意: security distance を変更できませんでした: {e}")
+
+    def restore():
+        try:
+            if prev["ext_move"] is not None:
+                motion.setExternalCollisionProtectionEnabled("Move", prev["ext_move"])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if prev["ortho"] is not None:
+                motion.setOrthogonalSecurityDistance(prev["ortho"])
+            if prev["tang"] is not None:
+                motion.setTangentialSecurityDistance(prev["tang"])
+        except Exception:  # noqa: BLE001
+            pass
+
+    return restore
+
+
+def cmd_rotate(args):
+    """その場回転。既定は moveTo(0,0,theta)。回らない個体/状況向けに診断と対策つき:
+      - robotIsWakeUp / moveInit / moveIsActive を表示し「命令が受理されたか」を切り分け。
+      - 回転前後の実 theta を計測し「本当に回ったか」を表示。
+      - --stand: 回転前に StandInit（腕を畳む）。腕が広がっていると基底回転が拒否されやすい。
+      - --vel  : moveToward(速度指令)で目標角まで閉ループ回転（moveTo が効かない時）。
+      - --force: 基底の衝突保護を一時OFF（※Pepperの"Move"は保護リフレックスで無効化不可な場合あり）。
+    """
+    import math
+    theta = args.angle if args.rad else math.radians(args.angle)
+    ctheta = max(-2 * math.pi, min(2 * math.pi, theta))   # 安全のため ±360° にクランプ
+    if ctheta != theta:
+        print(f"安全のためクランプしました -> {math.degrees(ctheta):.1f}°")
+        theta = ctheta
+    print(f"その場で回転（目標 {math.degrees(theta):+.1f}° / {theta:+.3f} rad、正=左回り）。"
+          "周囲に人や物が無いか確認してください。3秒後に開始…")
+    time.sleep(3.0)
+    session = connect()
+    motion = _prepare_motion(session, disable_life=not args.keep_life)
+    try:
+        print(f"robotIsWakeUp={motion.robotIsWakeUp()}")
+    except Exception:  # noqa: BLE001
+        pass
+    _report_protection(motion)
+
+    if args.stand:
+        try:
+            print("StandInit へ（腕を畳んで基底回転を許可されやすくする）…")
+            session.service("ALRobotPosture").goToPosture("StandInit", 0.5)
+        except Exception as e:  # noqa: BLE001
+            print(f"注意: goToPosture(StandInit) に失敗: {e}")
+
+    restore = None
+    if args.force:
+        print(" --force: 基底の衝突保護を一時OFFにします（終了時に自動で戻します）。")
+        restore = _relax_base_protection(motion)
+
+    try:
+        try:
+            motion.moveInit()
+            print("moveInit 完了")
+        except Exception as e:  # noqa: BLE001
+            print(f"注意: moveInit に失敗: {e}")
+        p0 = _robot_pose(motion)
+        th0 = p0[2] if p0 else None
+
+        if args.vel:
+            # 速度指令で目標角まで回す（moveTo が効かない個体向け）。正規化角速度(-1..1)。
+            wz = 0.5 if theta >= 0 else -0.5
+            print(f"moveToward(0, 0, {wz}) で目標角まで回転…")
+            motion.moveToward(0.0, 0.0, wz)
+            time.sleep(0.4)
+            try:
+                print(f"moveIsActive={motion.moveIsActive()}（Falseなら命令が拒否＝安全リフレックス）")
+            except Exception:  # noqa: BLE001
+                pass
+            t_start = time.time()
+            while time.time() - t_start < 25.0:
+                pc = _robot_pose(motion)
+                if pc is None or th0 is None:
+                    time.sleep(min(25.0, abs(theta) / 0.35))   # 姿勢計測不可→角速度概算で時間停止
+                    break
+                if abs(_ang_diff(pc[2], th0)) >= abs(theta) - math.radians(3):
+                    break
+                time.sleep(0.05)
+            motion.stopMove()
+        else:
+            print(f"moveTo(0, 0, {theta:.3f})")
+            motion.moveTo(0.0, 0.0, theta)
+
+        p1 = _robot_pose(motion)
+        if p0 and p1:
+            d = _ang_diff(p1[2], p0[2])
+            print(f"実際の回転: {math.degrees(d):+.1f}°（目標 {math.degrees(theta):+.1f}°）")
+            if abs(d) < math.radians(5) and abs(theta) > math.radians(10):
+                print("ほとんど回っていません。")
+        else:
+            print("回転指令を送信しました（getRobotPosition 不可のため実回転量は未計測）。")
+    finally:
+        if restore is not None:
+            restore()
+            print("基底保護を元に戻しました。")
+    print("回転完了。")
 
 
 def _service_name(s):
@@ -302,6 +456,18 @@ def main():
     pm.add_argument("theta", type=float)
     pm.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
     pm.set_defaults(func=cmd_move)
+
+    pr = sub.add_parser("rotate", help="その場回転（診断つき）。例: rotate 90 --stand")
+    pr.add_argument("angle", type=float, help="回転角。既定は度。正=左回り(CCW)、負=右回り")
+    pr.add_argument("--rad", action="store_true", help="angle をラジアンとして解釈")
+    pr.add_argument("--force", action="store_true",
+                    help="基底の衝突保護/security距離を一時OFF（終了時に自動復元）。周囲を空けて")
+    pr.add_argument("--vel", action="store_true",
+                    help="moveTo で回らない個体向け: moveToward(速度指令)で目標角まで回す")
+    pr.add_argument("--stand", action="store_true",
+                    help="回転前に StandInit（腕を畳む）。腕が広がっていると基底回転が拒否されやすい")
+    pr.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
+    pr.set_defaults(func=cmd_rotate)
 
     sub.add_parser("rest", help="力を抜く(rest)").set_defaults(func=cmd_rest)
     sub.add_parser("enable-life", help="自律機能を solitary に戻す").set_defaults(func=cmd_enable_life)
