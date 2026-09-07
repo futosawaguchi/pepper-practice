@@ -206,6 +206,7 @@ def cmd_rotate(args):
       - robotIsWakeUp / moveInit / moveIsActive を表示し「命令が受理されたか」を切り分け。
       - 回転前後の実 theta を計測し「本当に回ったか」を表示。
       - --stand: 回転前に StandInit（腕を畳む）。腕が広がっていると基底回転が拒否されやすい。
+      - 180°超の指定は 170° 以下に分割して実行（moveTo/計測とも ±180° で折り返すため）。
       - --vel  : moveToward(速度指令)で目標角まで閉ループ回転（moveTo が効かない時）。
       - --force: 基底の衝突保護を一時OFF（※Pepperの"Move"は保護リフレックスで無効化不可な場合あり）。
     """
@@ -247,6 +248,11 @@ def cmd_rotate(args):
         p0 = _robot_pose(motion)
         th0 = p0[2] if p0 else None
 
+        # 実測の積算回転量[rad]。_ang_diff は ±180° に正規化されるため、始点と終点だけを比べると
+        # 1周(360°)が 0° に見えてしまう。区間ごとに測って足すことで 180° 超でも正しく出す。
+        total = 0.0
+        measured = False
+
         if args.vel:
             # 速度指令で目標角まで回す（moveTo が効かない個体向け）。正規化角速度(-1..1)。
             wz = 0.5 if theta >= 0 else -0.5
@@ -257,25 +263,42 @@ def cmd_rotate(args):
                 print(f"moveIsActive={motion.moveIsActive()}（Falseなら命令が拒否＝安全リフレックス）")
             except Exception:  # noqa: BLE001
                 pass
+            th_last = th0
             t_start = time.time()
             while time.time() - t_start < 25.0:
                 pc = _robot_pose(motion)
-                if pc is None or th0 is None:
+                if pc is None or th_last is None:
                     time.sleep(min(25.0, abs(theta) / 0.35))   # 姿勢計測不可→角速度概算で時間停止
                     break
-                if abs(_ang_diff(pc[2], th0)) >= abs(theta) - math.radians(3):
+                total += _ang_diff(pc[2], th_last)             # 前回サンプルとの差を積算
+                th_last = pc[2]
+                measured = True
+                if abs(total) >= abs(theta) - math.radians(3):
                     break
                 time.sleep(0.05)
             motion.stopMove()
         else:
-            print(f"moveTo(0, 0, {theta:.3f})")
-            motion.moveTo(0.0, 0.0, theta)
+            # moveTo の theta も ±π に正規化される個体があり、360° 指定が 0° 扱いになりうる。
+            # 170° 以下に分割して順に実行し、各区間の実測を積算する。
+            step_max = math.radians(170.0)
+            n = max(1, int(math.ceil(abs(theta) / step_max)))
+            step = theta / n
+            if n > 1:
+                print(f"目標 {math.degrees(theta):+.1f}° を {n} 回に分割"
+                      f"（各 {math.degrees(step):+.1f}°）して実行します。")
+            for i in range(n):
+                pa = _robot_pose(motion)
+                label = f"  [{i + 1}/{n}]" if n > 1 else ""
+                print(f"moveTo(0, 0, {step:.3f}){label}")
+                motion.moveTo(0.0, 0.0, step)
+                pb = _robot_pose(motion)
+                if pa and pb:
+                    total += _ang_diff(pb[2], pa[2])
+                    measured = True
 
-        p1 = _robot_pose(motion)
-        if p0 and p1:
-            d = _ang_diff(p1[2], p0[2])
-            print(f"実際の回転: {math.degrees(d):+.1f}°（目標 {math.degrees(theta):+.1f}°）")
-            if abs(d) < math.radians(5) and abs(theta) > math.radians(10):
+        if measured:
+            print(f"実際の回転: {math.degrees(total):+.1f}°（目標 {math.degrees(theta):+.1f}°）")
+            if abs(total) < math.radians(5) and abs(theta) > math.radians(10):
                 print("ほとんど回っていません。")
         else:
             print("回転指令を送信しました（getRobotPosition 不可のため実回転量は未計測）。")
