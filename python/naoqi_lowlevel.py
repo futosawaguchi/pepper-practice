@@ -19,6 +19,7 @@ QiSDK アプリ（pepper.py の TCP ブリッジ）とは別系統。QiSDK で�
   python python/naoqi_lowlevel.py limits              # 全関節の可動範囲(rad+deg)をMarkdown表で出力
   python python/naoqi_lowlevel.py limits HeadYaw      # 特定関節だけ
   python python/naoqi_lowlevel.py move 0.2 0 0        # 基底移動 moveTo(x,y,theta)（周囲確認のうえ）
+  python python/naoqi_lowlevel.py move 0.2 0 45 --deg # theta を度で指定（既定はラジアン）
   python python/naoqi_lowlevel.py rotate 90 --stand   # その場回転（診断つき。--vel/--force も）
   python python/naoqi_lowlevel.py rest                # 力を抜く（rest）
   python python/naoqi_lowlevel.py enable-life         # 自律機能を戻す（solitary）
@@ -366,17 +367,31 @@ def cmd_limits(args):
 
 
 def cmd_move(args):
+    """基底移動 moveTo(x, y, theta)。theta は既定でラジアン（--deg で度指定）。
+    rotate と同じく moveTo の前に moveInit() を呼ぶ（省くと指令が黙って無視されることがある）。
+    その場回転だけなら度で書けて診断もある rotate を使うほうがよい。"""
     import math
+    raw_theta = math.radians(args.theta) if args.deg else args.theta
+    if not args.deg and abs(args.theta) > 2 * math.pi:
+        print(f"ヒント: theta={args.theta} はラジアンとして解釈されます"
+              f"（度で指定したいなら --deg。その場回転だけなら rotate を推奨）。")
     x = max(-0.5, min(0.5, args.x))
     y = max(-0.5, min(0.5, args.y))
-    theta = max(-math.pi / 2, min(math.pi / 2, args.theta))
-    if (x, y, theta) != (args.x, args.y, args.theta):
-        print(f"安全のためクランプしました -> x={x}, y={y}, theta={theta}")
-    print("★ 基底移動します。周囲に人や物が無いか確認してください。3秒後に開始…")
+    theta = max(-math.pi / 2, min(math.pi / 2, raw_theta))
+    if (x, y, theta) != (args.x, args.y, raw_theta):
+        print(f"安全のためクランプしました -> x={x}, y={y}, "
+              f"theta={theta:.4f} rad ({math.degrees(theta):+.1f}°)")
+    print(f"★ 基底移動します（x={x}m, y={y}m, theta={math.degrees(theta):+.1f}°）。"
+          "周囲に人や物が無いか確認してください。3秒後に開始…")
     time.sleep(3.0)
     session = connect()
     motion = _prepare_motion(session, disable_life=not args.keep_life)
-    print(f"moveTo({x}, {y}, {theta})")
+    try:
+        motion.moveInit()          # rotate と同じ準備。省くと moveTo が無視されることがある
+        print("moveInit 完了")
+    except Exception as e:  # noqa: BLE001
+        print(f"注意: moveInit に失敗: {e}")
+    print(f"moveTo({x}, {y}, {theta:.4f})")
     motion.moveTo(x, y, theta)
     print("移動完了。")
 
@@ -450,10 +465,12 @@ def main():
     pl.add_argument("joint", nargs="?", default=None)
     pl.set_defaults(func=cmd_limits)
 
-    pm = sub.add_parser("move", help="基底移動 moveTo(x,y,theta)。例: move 0.2 0 0")
-    pm.add_argument("x", type=float)
-    pm.add_argument("y", type=float)
-    pm.add_argument("theta", type=float)
+    pm = sub.add_parser("move", help="基底移動 moveTo(x,y,theta)。例: move 0.2 0 0 / move 0.2 0 45 --deg")
+    pm.add_argument("x", type=float, help="前後[m]。正=前。±0.5 にクランプ")
+    pm.add_argument("y", type=float, help="左右[m]。正=左。±0.5 にクランプ")
+    pm.add_argument("theta", type=float,
+                    help="回転。既定はラジアン（--deg で度）。正=左回り。±90° にクランプ")
+    pm.add_argument("--deg", action="store_true", help="theta を度として解釈（例: move 0 0 45 --deg）")
     pm.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
     pm.set_defaults(func=cmd_move)
 
