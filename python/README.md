@@ -61,11 +61,37 @@ python python/naoqi_lowlevel.py arm             # デモ: 右腕を上げる
 python python/naoqi_lowlevel.py posture StandInit   # 姿勢（postures で一覧）
 python python/naoqi_lowlevel.py hand open R     # 右手を開く
 python python/naoqi_lowlevel.py move 0.2 0 0    # 基底移動（周囲確認のうえ）
+python python/naoqi_lowlevel.py move 1 0 0 --max 1 --speed 0.2   # 0.5m 超・速度指定つき
 python python/naoqi_lowlevel.py rest            # 力を抜く
 python python/naoqi_lowlevel.py enable-life     # 自律機能を戻す
 ```
 Pepper の関節名（`angles`/`limits` で使用）: `HeadYaw` `HeadPitch` / 各腕 `?ShoulderPitch` `?ShoulderRoll`
 `?ElbowYaw` `?ElbowRoll` `?WristYaw` `?Hand`（?=L/R） / `HipRoll` `HipPitch` `KneePitch`。安全範囲は `limits` で確認。
+
+### 基底移動（`move`）の距離と速度
+`move x y theta` の x/y はメートル（正=前/左）、theta は既定でラジアン（`--deg` で度、正=左回り）。
+いずれも**現在位置・向きからの相対値**。
+
+| オプション | 意味 | 既定 | 範囲 |
+|---|---|---|---|
+| `--max` | x/y の上限[m]。超えた値はクランプ | 0.5 | 0〜3.0 |
+| `--speed` | 並進の最高速度 `MaxVelXY`[m/s] | 未指定（ロボット既定 0.35） | 0.1〜0.55 |
+
+`--speed` の目安（参考: 人の通常歩行は 1.1〜1.4 m/s ≒ 時速 4〜5 km）:
+
+| 値[m/s] | 時速 | 2m 進む時間の目安 | 感覚 |
+|---|---|---|---|
+| 0.1（最小） | 約 0.36 km/h | 約 20 秒 | じわじわ。様子見に |
+| 0.2 | 約 0.72 km/h | 約 10 秒 | ゆっくり。初回の試走におすすめ |
+| 0.35（既定） | 約 1.3 km/h | 約 6 秒 | 普段の Pepper |
+| 0.55（最大） | 約 2.0 km/h | 約 4 秒 | 速め。止まるまでの距離も伸びる |
+
+- 時間は加減速を除いた目安。加速度の既定は 0.3 m/s² で、0.55 m/s に達するまで約 1.8 秒・約 0.5m かかる
+  （短い距離では最高速度まで届かない）。
+- 衝突保護（ExternalCollisionProtection）が有効なら、障害物に近づくと速度設定に関係なく減速・停止する。
+  ただしガラス・細い脚・黒く低い物などは見逃すことがあるので過信しない。`move` は実行前に保護状態を、
+  実行後に実際の移動量を表示する（手前で止まったら「障害物検知の可能性」と出る）。
+- 範囲・既定値は NAOqi ドキュメント記載の Pepper 向けの値。実機での挙動は要確認。
 
 - 接続が `disconnected`/`Connection refused` で安定しない場合は qi のバージョン/スキーム/認証を見直す
   （libqi-python の 2.9 接続には既知の不安定さあり）。最終手段は `ssh nao@<頭部IP>` でロボットに入り、

@@ -21,6 +21,7 @@ QiSDK アプリ（pepper.py の TCP ブリッジ）とは別系統。QiSDK で�
   python python/naoqi_lowlevel.py move 0.2 0 0        # 基底移動 moveTo(x,y,theta)（周囲確認のうえ）
   python python/naoqi_lowlevel.py move 0.2 0 45 --deg # theta を度で指定（既定はラジアン）
   python python/naoqi_lowlevel.py move 2 0 0 --max 2  # 0.5m 超を進む（衝突保護の状態を表示し、実移動量を計測）
+  python python/naoqi_lowlevel.py move 1 0 0 --max 1 --speed 0.2  # 最高速度[m/s]を指定（0.1〜0.55）
   python python/naoqi_lowlevel.py rotate 90 --stand   # その場回転（診断つき。--vel/--force も）
   python python/naoqi_lowlevel.py rest                # 力を抜く（rest）
   python python/naoqi_lowlevel.py enable-life         # 自律機能を戻す（solitary）
@@ -41,6 +42,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 MOVE_HARD_MAX = 3.0  # move の --max で許す x/y の絶対上限[m]
+MOVE_SPEED_RANGE = (0.1, 0.55)  # move の --speed（MaxVelXY[m/s]）の範囲。Pepper の既定は 0.35
 
 # 重要: NAOqi（ALMotion）はロボット「頭部」で動く。胸部 Android タブレット（PEPPER_IPS）とは別IP。
 #   タブレット = QiSDKアプリ側のIP / ロボット頭部 = ssh nao@<このIP> で入れる方（実値は python/.env に）
@@ -396,6 +398,7 @@ def cmd_move(args):
     """基底移動 moveTo(x, y, theta)。theta は既定でラジアン（--deg で度指定）。
     rotate と同じく moveTo の前に moveInit() を呼ぶ（省くと指令が黙って無視されることがある）。
     x/y の上限は既定 ±0.5m、--max で最大 MOVE_HARD_MAX まで広げられる。
+    --speed で並進の最高速度 MaxVelXY[m/s] を指定（未指定ならロボット既定の 0.35）。
     障害物での停止は衝突保護（ExternalCollisionProtection）頼みなので、実移動量を計測して表示する。
     その場回転だけなら度で書けて診断もある rotate を使うほうがよい。"""
     import math
@@ -412,8 +415,16 @@ def cmd_move(args):
     if (x, y, theta) != (args.x, args.y, raw_theta):
         print(f"安全のためクランプしました -> x={x}, y={y}, "
               f"theta={theta:.4f} rad ({math.degrees(theta):+.1f}°)")
-    print(f"★ 基底移動します（x={x}m, y={y}m, theta={math.degrees(theta):+.1f}°）。"
-          "周囲に人や物が無いか確認してください。3秒後に開始…")
+    config = []
+    if args.speed is not None:
+        lo, hi = MOVE_SPEED_RANGE
+        speed = max(lo, min(hi, args.speed))
+        if speed != args.speed:
+            print(f"--speed は {lo}〜{hi} m/s に制限されます -> {speed}")
+        config.append(["MaxVelXY", speed])
+    speed_txt = f"{config[0][1]}m/s" if config else "既定"
+    print(f"★ 基底移動します（x={x}m, y={y}m, theta={math.degrees(theta):+.1f}°, "
+          f"速度={speed_txt}）。周囲に人や物が無いか確認してください。3秒後に開始…")
     time.sleep(3.0)
     session = connect()
     motion = _prepare_motion(session, disable_life=not args.keep_life)
@@ -426,8 +437,12 @@ def cmd_move(args):
     except Exception as e:  # noqa: BLE001
         print(f"注意: moveInit に失敗: {e}")
     start = _robot_pose(motion)
-    print(f"moveTo({x}, {y}, {theta:.4f})")
-    motion.moveTo(x, y, theta)
+    if config:
+        print(f"moveTo({x}, {y}, {theta:.4f}, {config})")
+        motion.moveTo(x, y, theta, config)
+    else:
+        print(f"moveTo({x}, {y}, {theta:.4f})")
+        motion.moveTo(x, y, theta)
     end = _robot_pose(motion)
     if start and end:
         # moveTo は障害物で途中停止しても例外にならないので、オドメトリで実移動量を確認する
@@ -517,6 +532,8 @@ def main():
     pm.add_argument("--deg", action="store_true", help="theta を度として解釈（例: move 0 0 45 --deg）")
     pm.add_argument("--max", type=float, default=0.5,
                     help=f"x/y の上限[m]（既定 0.5、最大 {MOVE_HARD_MAX}）。例: move 2 0 0 --max 2")
+    pm.add_argument("--speed", type=float, default=None,
+                    help=f"並進の最高速度[m/s]（{MOVE_SPEED_RANGE[0]}〜{MOVE_SPEED_RANGE[1]}、未指定=既定0.35）")
     pm.add_argument("--keep-life", action="store_true", help="自律機能を止めない")
     pm.set_defaults(func=cmd_move)
 
